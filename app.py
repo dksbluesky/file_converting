@@ -1,13 +1,28 @@
 import streamlit as st
-import google.generativeai as genai
+import subprocess
+import sys
+
+# --- 【暴力破解區】強制安裝最新版 Google AI 工具 ---
+# 這段程式碼會強迫主機安裝最新版，解決 "404 model not found"
+try:
+    import google.generativeai as genai
+    # 檢查版本，如果太舊就強制更新
+    if genai.__version__ < "0.7.0":
+        raise ImportError
+except ImportError:
+    st.warning("正在強制更新 AI 核心元件，請稍候約 30 秒...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-generativeai"])
+    import google.generativeai as genai
+    st.success("更新完成！請按一下網頁右上角的 'Rerun' 或重新整理頁面。")
+# ------------------------------------------------
+
 import pandas as pd
 from io import StringIO, BytesIO
 
 # 設定頁面資訊
 st.set_page_config(page_title="家人專用轉檔神器", page_icon="📝")
 
-# 讀取 API Key (從 Streamlit Secrets 讀取)
-# 如果是本機測試，這行會報錯，但在雲端部署時會生效
+# 讀取 API Key
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -15,9 +30,9 @@ except:
     st.error("找不到 API Key，請檢查 Secrets 設定！")
 
 def process_file_to_df(uploaded_file):
-    model = genai.GenerativeModel('gemini-1.5-pro')
+    # 使用目前最穩定的模型
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # 針對您的報價單格式優化的 Prompt
     prompt = """
     你是一個專業的資料輸入員。請將這份報價單/請購單圖片或PDF轉換為 CSV 格式。
     
@@ -39,18 +54,18 @@ def process_file_to_df(uploaded_file):
 
 # --- APP 介面 ---
 st.title("📝 家用報價單轉 Excel 神器")
-st.markdown("### 步驟：上傳檔案 -> 等待 AI 讀取 -> 下載 Excel")
+st.caption(f"目前 AI 核心版本: {genai.__version__}") # 顯示版本號讓您安心
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
-        with st.spinner('AI 正在努力看圖打字中，請稍候...'):
+        with st.spinner('AI 正在努力看圖打字中...'):
             try:
                 # 1. 呼叫 AI
                 csv_text = process_file_to_df(uploaded_file)
                 
-                # 2. 清理資料 (移除可能殘留的 markdown 符號)
+                # 2. 清理資料
                 clean_csv = csv_text.replace("```csv", "").replace("```", "").strip()
                 
                 # 3. 轉成 DataFrame
@@ -72,6 +87,4 @@ if uploaded_file is not None:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             except Exception as e:
-
-                st.error(f"發生錯誤，請重試。錯誤訊息：{e}")
-
+                st.error(f"發生錯誤：{e}")
