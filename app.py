@@ -15,7 +15,7 @@ except:
     st.error("找不到 API Key，請檢查 Secrets 設定！")
 
 def process_file_to_df(uploaded_file):
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-pro')
     
     # 針對您的報價單格式優化的 Prompt
     prompt = """
@@ -74,3 +74,4 @@ if uploaded_file is not None:
             except Exception as e:
 
                 st.error(f"發生錯誤，請重試。錯誤訊息：{e}")
+
