@@ -4,19 +4,27 @@ import pandas as pd
 from io import StringIO, BytesIO
 
 # --- 設定頁面 ---
-st.set_page_config(page_title="家人專用轉檔神器", page_icon="📝")
+st.set_page_config(page_title="轉檔神器", page_icon="📄")
 
 # --- 讀取 API Key ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
 except:
-    st.error("找不到 API Key，請檢查 Secrets 設定！")
+    st.error("⚠️ 找不到 API Key，請檢查 Secrets 設定！")
+    st.stop()
 
-def process_file_to_df(uploaded_file):
-    # 【關鍵修改】改用相容性最高的 "gemini-pro" 模型
-    # 先求能跑，再求快。這個模型比較舊，但最穩定。
-    model = genai.GenerativeModel('gemini-pro')
+# --- 主介面 ---
+st.title("📄 家用報價單轉 Excel 神器")
+# 【關鍵檢查】這行會顯示目前安裝的版本
+st.caption(f"目前 AI 核心版本 (SDK): {genai.__version__}") 
+
+if genai.__version__ < "0.7.0":
+    st.error("❌ 版本過舊！請執行「刪除 App 再重新建立」的步驟。")
+
+def process_file(uploaded_file):
+    # 使用 1.5 Flash 模型
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = """
     你是一個專業的資料輸入員。請將這份報價單/請購單圖片或PDF轉換為 CSV 格式。
@@ -31,21 +39,11 @@ def process_file_to_df(uploaded_file):
     7. 所有金額保持數字格式 (可含千分位逗號)。
     """
     
-    # 讀取檔案
     bytes_data = uploaded_file.getvalue()
-    
-    # gemini-pro 對圖片的處理方式稍微不同，這裡做通用處理
-    parts = [
-        {"mime_type": uploaded_file.type, "data": bytes_data},
-        prompt
-    ]
+    parts = [{"mime_type": uploaded_file.type, "data": bytes_data}, prompt]
     
     response = model.generate_content(parts)
     return response.text
-
-# --- APP 介面 ---
-st.title("📝 家用報價單轉 Excel 神器 (穩定版)")
-st.write("目前使用通用相容模式，請上傳檔案試試看！")
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
@@ -53,20 +51,13 @@ if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
         with st.spinner('AI 正在讀取中...'):
             try:
-                # 1. 呼叫 AI
-                csv_text = process_file_to_df(uploaded_file)
-                
-                # 2. 清理資料
+                csv_text = process_file(uploaded_file)
                 clean_csv = csv_text.replace("```csv", "").replace("```", "").strip()
-                
-                # 3. 轉成 DataFrame
                 df = pd.read_csv(StringIO(clean_csv))
                 
-                # 4. 顯示結果
                 st.success("轉換成功！")
                 st.dataframe(df)
                 
-                # 5. 製作 Excel 下載
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='報價單資料')
@@ -79,4 +70,3 @@ if uploaded_file is not None:
                 )
             except Exception as e:
                 st.error(f"發生錯誤：{e}")
-
