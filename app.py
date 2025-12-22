@@ -1,28 +1,12 @@
 import streamlit as st
-import subprocess
-import sys
-
-# --- 【暴力破解區】強制安裝最新版 Google AI 工具 ---
-# 這段程式碼會強迫主機安裝最新版，解決 "404 model not found"
-try:
-    import google.generativeai as genai
-    # 檢查版本，如果太舊就強制更新
-    if genai.__version__ < "0.7.0":
-        raise ImportError
-except ImportError:
-    st.warning("正在強制更新 AI 核心元件，請稍候約 30 秒...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-generativeai"])
-    import google.generativeai as genai
-    st.success("更新完成！請按一下網頁右上角的 'Rerun' 或重新整理頁面。")
-# ------------------------------------------------
-
+import google.generativeai as genai
 import pandas as pd
 from io import StringIO, BytesIO
 
-# 設定頁面資訊
+# --- 設定頁面 ---
 st.set_page_config(page_title="家人專用轉檔神器", page_icon="📝")
 
-# 讀取 API Key
+# --- 讀取 API Key ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -30,8 +14,9 @@ except:
     st.error("找不到 API Key，請檢查 Secrets 設定！")
 
 def process_file_to_df(uploaded_file):
-    # 使用目前最穩定的模型
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 【關鍵修改】改用相容性最高的 "gemini-pro" 模型
+    # 先求能跑，再求快。這個模型比較舊，但最穩定。
+    model = genai.GenerativeModel('gemini-pro')
     
     prompt = """
     你是一個專業的資料輸入員。請將這份報價單/請購單圖片或PDF轉換為 CSV 格式。
@@ -46,21 +31,27 @@ def process_file_to_df(uploaded_file):
     7. 所有金額保持數字格式 (可含千分位逗號)。
     """
     
+    # 讀取檔案
     bytes_data = uploaded_file.getvalue()
-    parts = [{"mime_type": uploaded_file.type, "data": bytes_data}, prompt]
+    
+    # gemini-pro 對圖片的處理方式稍微不同，這裡做通用處理
+    parts = [
+        {"mime_type": uploaded_file.type, "data": bytes_data},
+        prompt
+    ]
     
     response = model.generate_content(parts)
     return response.text
 
 # --- APP 介面 ---
-st.title("📝 家用報價單轉 Excel 神器")
-st.caption(f"目前 AI 核心版本: {genai.__version__}") # 顯示版本號讓您安心
+st.title("📝 家用報價單轉 Excel 神器 (穩定版)")
+st.write("目前使用通用相容模式，請上傳檔案試試看！")
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
-        with st.spinner('AI 正在努力看圖打字中...'):
+        with st.spinner('AI 正在讀取中...'):
             try:
                 # 1. 呼叫 AI
                 csv_text = process_file_to_df(uploaded_file)
@@ -72,7 +63,7 @@ if uploaded_file is not None:
                 df = pd.read_csv(StringIO(clean_csv))
                 
                 # 4. 顯示結果
-                st.success("轉換成功！預覽如下：")
+                st.success("轉換成功！")
                 st.dataframe(df)
                 
                 # 5. 製作 Excel 下載
@@ -83,8 +74,9 @@ if uploaded_file is not None:
                 st.download_button(
                     label="📥 下載 Excel 檔案",
                     data=output.getvalue(),
-                    file_name="整理好的報價單.xlsx",
+                    file_name="報價單.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             except Exception as e:
                 st.error(f"發生錯誤：{e}")
+
