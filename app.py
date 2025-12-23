@@ -1,3 +1,4 @@
+
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
@@ -5,7 +6,7 @@ from io import BytesIO
 import time
 
 # --- 設定頁面 ---
-st.set_page_config(page_title="轉檔神器 (最終修正版)", page_icon="✅")
+st.set_page_config(page_title="轉檔神器 (萬用版)", page_icon="🎛️")
 
 # --- 讀取 API Key ---
 try:
@@ -16,12 +17,11 @@ except:
     st.stop()
 
 # --- 核心處理函數 ---
-def process_file(uploaded_file):
-    # 【強制指定】使用目前最穩定、免費額度最高的 1.5 Flash
-    # 絕對不使用自動偵測，避免跑出奇怪的型號
-    model = genai.GenerativeModel('gemini-1.5-flash')
+def process_file(uploaded_file, model_name):
+    # 使用使用者選單指定的模型
+    model = genai.GenerativeModel(model_name)
     
-    # 提示詞：使用 ### 分隔，確保 Excel 格式整齊
+    # 提示詞：使用 ### 分隔
     prompt = """
     你是一個專業的資料輸入員。請將這份圖片或 PDF 中的表格轉換為純文字資料。
     
@@ -44,40 +44,46 @@ def process_file(uploaded_file):
     return response.text
 
 # --- APP 介面 ---
-st.title("✅ 轉檔神器 (最終修正版)")
-st.caption("目前鎖定模型: gemini-1.5-flash")
+st.title("🎛️ 轉檔神器 (模型自選版)")
+st.markdown("如果出現 404 錯誤，請在下方更換另一個模型試試看！")
+
+# 【關鍵功能】下拉式選單，讓您手動切換模型
+model_option = st.selectbox(
+    "請選擇 AI 模型：",
+    (
+        "gemini-1.5-pro",      # 選項 1: 旗艦版 (最推薦，成功率最高)
+        "gemini-1.5-flash",    # 選項 2: 快速版 (您的帳號可能不支援)
+        "gemini-pro-vision",   # 選項 3: 舊版 (備用)
+    )
+)
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
         status_box = st.empty()
-        status_box.info("AI 正在閱讀文件中... (請稍候)")
+        status_box.info(f"正在使用 {model_option} 模型讀取中... (請稍候)")
         
         try:
-            # 1. 呼叫 AI
-            raw_text = process_file(uploaded_file)
+            # 1. 呼叫 AI (帶入您選的模型)
+            raw_text = process_file(uploaded_file, model_option)
             
             # 2. 清理資料
             clean_text = raw_text.replace("```csv", "").replace("```", "").strip()
             
-            # 3. 手動解析 (使用 ### 分隔)
+            # 3. 手動解析
             data = []
             lines = clean_text.split('\n')
             
             if len(lines) > 0:
-                # 抓取第一行當表頭
                 headers = lines[0].split('###')
                 headers = [h.strip() for h in headers]
                 
-                # 處理剩下的行
                 for line in lines[1:]:
                     if not line.strip(): continue
-                    
                     row = line.split('###')
                     row = [r.strip() for r in row]
                     
-                    # 防呆補齊
                     if len(row) < len(headers):
                         row += [''] * (len(headers) - len(row))
                     elif len(row) > len(headers):
@@ -85,13 +91,11 @@ if uploaded_file is not None:
                         
                     data.append(row)
                 
-                # 轉成 DataFrame
                 if data:
                     df = pd.DataFrame(data, columns=headers)
-                    status_box.success("✅ 轉換成功！")
+                    status_box.success(f"✅ 轉換成功！(使用模型: {model_option})")
                     st.dataframe(df)
                     
-                    # 4. 下載按鈕
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df.to_excel(writer, index=False, sheet_name='報價單')
@@ -103,13 +107,14 @@ if uploaded_file is not None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("AI 回傳了空的內容，請稍後再試。")
+                    st.warning("AI 回傳了空的內容，請重試。")
             else:
-                st.warning("AI 回傳格式無法辨識，請稍後再試。")
+                st.warning("格式無法辨識，請重試。")
 
         except Exception as e:
-            # 針對 429 錯誤顯示更友善的訊息
-            if "429" in str(e):
-                status_box.error("⏳ 系統正在冷卻中 (429 Quota Exceeded)。請喝杯水，等待 2~3 分鐘後再試一次即可！")
+            if "404" in str(e):
+                status_box.error(f"❌ 模型 {model_option} 無法使用 (404 Not Found)。請在上方選單換一個模型再試一次！")
+            elif "429" in str(e):
+                status_box.error("⏳ 速度太快了 (429 Quota)！請休息 2 分鐘後再試。")
             else:
                 status_box.error(f"發生錯誤: {e}")
