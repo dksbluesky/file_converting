@@ -5,7 +5,7 @@ from io import BytesIO
 import time
 
 # --- 設定頁面 ---
-st.set_page_config(page_title="最終版轉檔神器", page_icon="🏆")
+st.set_page_config(page_title="轉檔神器 (最終修正版)", page_icon="✅")
 
 # --- 讀取 API Key ---
 try:
@@ -17,10 +17,11 @@ except:
 
 # --- 核心處理函數 ---
 def process_file(uploaded_file):
-    # 【修正】請務必使用正確的型號名稱，不要改成 2.5
+    # 【強制指定】使用目前最穩定、免費額度最高的 1.5 Flash
+    # 絕對不使用自動偵測，避免跑出奇怪的型號
     model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # 提示詞：使用 ### 分隔，確保格式不亂
+    # 提示詞：使用 ### 分隔，確保 Excel 格式整齊
     prompt = """
     你是一個專業的資料輸入員。請將這份圖片或 PDF 中的表格轉換為純文字資料。
     
@@ -43,15 +44,15 @@ def process_file(uploaded_file):
     return response.text
 
 # --- APP 介面 ---
-st.title("🏆 最終版轉檔神器")
-st.caption("使用模型: gemini-1.5-flash (請勿修改)")
+st.title("✅ 轉檔神器 (最終修正版)")
+st.caption("目前鎖定模型: gemini-1.5-flash")
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
         status_box = st.empty()
-        status_box.info("AI 正在閱讀文件中... (如果出現錯誤請等待 1 分鐘後重試)")
+        status_box.info("AI 正在閱讀文件中... (請稍候)")
         
         try:
             # 1. 呼叫 AI
@@ -60,7 +61,7 @@ if uploaded_file is not None:
             # 2. 清理資料
             clean_text = raw_text.replace("```csv", "").replace("```", "").strip()
             
-            # 3. 手動解析 (使用 ### 分隔，解決所有格式問題)
+            # 3. 手動解析 (使用 ### 分隔)
             data = []
             lines = clean_text.split('\n')
             
@@ -76,7 +77,7 @@ if uploaded_file is not None:
                     row = line.split('###')
                     row = [r.strip() for r in row]
                     
-                    # 防呆補齊：避免欄位數量不對導致報錯
+                    # 防呆補齊
                     if len(row) < len(headers):
                         row += [''] * (len(headers) - len(row))
                     elif len(row) > len(headers):
@@ -107,10 +108,8 @@ if uploaded_file is not None:
                 st.warning("AI 回傳格式無法辨識，請稍後再試。")
 
         except Exception as e:
-            # 如果是 Quota 錯誤，顯示友善提示
+            # 針對 429 錯誤顯示更友善的訊息
             if "429" in str(e):
-                status_box.error("⏳ 系統忙碌中 (429 Quota Exceeded)。請喝杯水，等待 2 分鐘後再按一次按鈕即可！")
+                status_box.error("⏳ 系統正在冷卻中 (429 Quota Exceeded)。請喝杯水，等待 2~3 分鐘後再試一次即可！")
             else:
                 status_box.error(f"發生錯誤: {e}")
-
-
