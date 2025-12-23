@@ -4,7 +4,7 @@ import pandas as pd
 from io import StringIO, BytesIO
 
 # --- 設定頁面 ---
-st.set_page_config(page_title="轉檔神器 (自動偵測版)", page_icon="🤖")
+st.set_page_config(page_title="智慧型轉檔神器", page_icon="🤖")
 
 # --- 讀取 API Key ---
 try:
@@ -14,109 +14,96 @@ except:
     st.error("⚠️ 找不到 API Key，請檢查 Secrets 設定！")
     st.stop()
 
-# --- 核心邏輯：自動尋找可用模型 ---
-def get_available_model():
-    """
-    不猜測模型名稱，直接問 API 有哪些模型可用，並挑選支援視覺辨識的。
-    """
-    try:
-        status_text = "正在掃描您的 API Key 可用模型..."
-        print(status_text)
-        
-        # 列出所有模型
-        all_models = list(genai.list_models())
-        
-        # 優先順序：找最新的 1.5 系列 -> 找 Pro -> 找任意可用的
-        priority_keywords = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro-vision"]
-        
-        # 1. 先試著找我們最想要的
-        for keyword in priority_keywords:
-            for m in all_models:
-                if keyword in m.name and "vision" not in m.name: # 1.5 系列通常全能
-                    return m.name
-                if keyword in m.name:
-                    return m.name
-        
-        # 2. 如果都沒有，隨便找一個支援 generateContent 的
-        for m in all_models:
-            if "generateContent" in m.supported_generation_methods:
-                if "gemini" in m.name: # 確保是 Gemini 系列
-                    return m.name
-        
-        return None
-    except Exception as e:
-        return None
-
-# --- 轉換函數 ---
-def process_file(uploaded_file, model_name):
-    model = genai.GenerativeModel(model_name)
-    
-    prompt = """
-    你是一個專業的資料輸入員。請將這份報價單/請購單圖片或PDF轉換為 CSV 格式。
-    【重要規則】
-    1. 輸出必須是標準 CSV 格式。
-    2. 只要輸出 CSV 內容，不要有任何 Markdown 標記 (不要有 ```csv ... ```)。
-    3. 必須包含表頭資訊：公司名稱、工程名稱、單號、日期 (若有)。
-    4. 必須完整列出表格明細：項次、品名、型號、單位、數量、單價、總價、備註。
-    5. 若遇到跨頁表格，請自動合併為一張表。
-    6. 請務必包含底部的付款條件、稅金、驗收條款等文字資訊，將其整理在表格最下方的列。
-    7. 所有金額保持數字格式 (可含千分位逗號)。
-    """
-    
+# --- 核心轉換函數 ---
+def process_file_with_auto_model(uploaded_file):
     bytes_data = uploaded_file.getvalue()
     
-    # 建立內容 (處理圖片或PDF)
-    parts = [{"mime_type": uploaded_file.type, "data": bytes_data}, prompt]
+    # 【關鍵修改】改用 "|" 當分隔符號，避免內容中的逗號(例如金額 3,000) 導致錯亂
+    prompt = """
+    你是一個專業的資料輸入員。請將這份圖片或PDF中的表格轉換為「直槓分隔」的 CSV 格式 (Pipe-separated values)。
     
-    response = model.generate_content(parts)
-    return response.text
+    【嚴格規則】
+    1. 使用 "|" (直槓) 作為欄位分隔符號，不要用逗號。
+    2. 輸出的第一行必須是表頭 (例如: 項次|品名|數量|單價|總價...)。
+    3. 不要有任何 Markdown 標記 (不要有 ```csv 或 ``` 符號)，只輸出純文字資料。
+    4. 不要輸出任何開頭的解釋文字 (例如 "好的，這是結果...")。
+    5. 必須完整列出表格明細。
+    6. 若遇到跨頁表格，請自動合併。
+    7. 底部若有付款條件、稅金等資訊，請整理在表格最下方。
+    8. 金額請保留千分位符號 (如 3,000)。
+    """
+    
+    parts = [{"mime_type": uploaded_file.type, "data": bytes_data}, prompt]
+
+    # 自動輪替模型清單 (先試旗艦版，再試快速版)
+    model_candidates = [
+        "gemini-1.5-pro",          # 首選：理解力最強
+        "gemini-1.5-flash",        # 次選：速度快
+        "gemini-pro",              # 備案：舊版穩定
+    ]
+    
+    last_error = None
+    
+    for model_name in model_candidates:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(parts)
+            return response.text, model_name
+        except Exception as e:
+            last_error = e
+            continue
+            
+    raise last_error
 
 # --- 主介面 ---
-st.title("🤖 智慧型轉檔神器")
-
-# 1. 程式啟動時，自動偵測模型
-if "valid_model" not in st.session_state:
-    with st.spinner("正在為您的 API Key 配對最佳模型..."):
-        detected_model = get_available_model()
-        if detected_model:
-            st.session_state["valid_model"] = detected_model
-            st.success(f"✅ 配對成功！目前使用模型：{detected_model}")
-        else:
-            # 如果自動偵測失敗，回退到最原始的設定
-            st.session_state["valid_model"] = "gemini-1.5-flash"
-            st.warning("⚠️ 無法自動偵測模型清單 (可能權限不足)，將嘗試使用預設值。")
-else:
-    st.caption(f"目前使用模型: {st.session_state['valid_model']} (SDK: {genai.__version__})")
+st.title("🤖 智慧型轉檔神器 (增強版)")
+# 顯示目前的 SDK 版本，確認環境正常
+st.caption(f"目前運作環境: SDK {genai.__version__}") 
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
-        with st.spinner('AI 正在讀取中...'):
+        status_box = st.empty()
+        
+        try:
+            status_box.info("AI 正在閱讀文件中... (如果檔案較大請稍候)")
+            
+            # 1. 呼叫 AI
+            raw_text, used_model = process_file_with_auto_model(uploaded_file)
+            
+            # 2. 清理資料 (移除可能殘留的標記)
+            clean_text = raw_text.replace("```csv", "").replace("```", "").strip()
+            
+            # 3. 嘗試轉換成表格 (使用 | 分隔)
+            # on_bad_lines='skip' 會自動跳過格式錯誤的行，避免程式崩潰
             try:
-                # 使用剛剛偵測到的模型名稱
-                target_model = st.session_state.get("valid_model", "gemini-1.5-flash")
+                df = pd.read_csv(StringIO(clean_text), sep="|", on_bad_lines='skip')
                 
-                csv_text = process_file(uploaded_file, target_model)
+                # 簡單清理：移除全空的欄位
+                df = df.dropna(axis=1, how='all')
                 
-                clean_csv = csv_text.replace("```csv", "").replace("```", "").strip()
-                df = pd.read_csv(StringIO(clean_csv))
+                status_box.success(f"✅ 轉換成功！(使用模型: {used_model})")
                 
-                st.success("轉換成功！")
+                # 4. 顯示預覽
                 st.dataframe(df)
                 
+                # 5. 製作 Excel 下載
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='報價單資料')
+                    df.to_excel(writer, index=False, sheet_name='轉檔結果')
                 
                 st.download_button(
                     label="📥 下載 Excel 檔案",
                     data=output.getvalue(),
-                    file_name="報價單.xlsx",
+                    file_name="轉檔結果.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-            except Exception as e:
-                st.error(f"發生錯誤：{e}")
-                st.markdown("---")
-                st.info("💡 如果出現 404 錯誤，通常代表您的 API Key 權限不足或過期。建議去 Google AI Studio 重新申請一組 Key。")
 
+            except Exception as parse_error:
+                st.error("表格格式轉換失敗，但 AI 有讀到內容。請查看下方的原始資料：")
+                st.text_area("AI 回傳的原始文字 (可複製自行整理)", clean_text, height=300)
+                st.error(f"錯誤代碼: {parse_error}")
+            
+        except Exception as e:
+            status_box.error(f"AI 讀取失敗，請確認圖片清晰度。錯誤訊息：{e}")
