@@ -4,7 +4,7 @@ import pandas as pd
 from io import BytesIO
 
 # --- 設定頁面 ---
-st.set_page_config(page_title="智慧型轉檔神器", page_icon="💪")
+st.set_page_config(page_title="智慧型轉檔神器", page_icon="🌟")
 
 # --- 讀取 API Key ---
 try:
@@ -14,12 +14,11 @@ except:
     st.error("⚠️ 找不到 API Key，請檢查 Secrets 設定！")
     st.stop()
 
-# --- 核心處理函數 ---
-def process_file(uploaded_file):
-    # 使用 1.5 Flash 模型
-    model = genai.GenerativeModel('gemini-1.5-flash')
+# --- 核心處理函數 (含自動切換模型功能) ---
+def process_file_with_fallback(uploaded_file):
+    bytes_data = uploaded_file.getvalue()
     
-    # 【關鍵策略】請 AI 用特殊的「###」符號來分隔，絕對不會跟內容衝突
+    # 提示詞：要求 AI 用 "###" 分隔，避免逗號干擾
     prompt = """
     你是一個專業的資料輸入員。請將這份圖片或 PDF 中的表格轉換為純文字資料。
     
@@ -34,62 +33,79 @@ def process_file(uploaded_file):
     7. 底部若有付款條件、稅金等資訊，請整理在表格最下方的列。
     """
     
-    bytes_data = uploaded_file.getvalue()
     parts = [{"mime_type": uploaded_file.type, "data": bytes_data}, prompt]
     
-    response = model.generate_content(parts)
-    return response.text
+    # 【關鍵功能】候選模型清單 (如果第一個失敗，自動試下一個)
+    model_candidates = [
+        "gemini-1.5-pro",          # 旗艦版 (最聰明)
+        "gemini-1.5-flash",        # 快速版
+        "gemini-pro",              # 舊版 (相容性最高)
+        "gemini-pro-vision"        # 舊版視覺模型
+    ]
+    
+    last_error = None
+    
+    # 迴圈測試每一個模型，直到成功為止
+    for model_name in model_candidates:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(parts)
+            return response.text, model_name # 回傳成功結果與使用的模型
+        except Exception as e:
+            last_error = e
+            continue # 失敗了就試下一個
+            
+    # 如果全部都失敗，才報錯
+    raise last_error
 
 # --- APP 介面 ---
-st.title("💪 智慧型轉檔神器 (強效版)")
-st.caption("目前使用模型: gemini-1.5-flash | 狀態: API 連線正常")
+st.title("🌟 智慧型轉檔神器 (完美合體版)")
+st.caption("已啟用：自動模型切換 + 強力表格解析")
 
 uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
 
 if uploaded_file is not None:
     if st.button("🚀 開始轉換", type="primary"):
         status_box = st.empty()
-        status_box.info("AI 正在閱讀文件中... (連線成功，處理資料中)")
+        status_box.info("AI 正在閱讀文件中... (正在尋找可用的模型)")
         
         try:
-            # 1. 呼叫 AI
-            raw_text = process_file(uploaded_file)
+            # 1. 呼叫 AI (會自動嘗試多個模型)
+            raw_text, used_model = process_file_with_fallback(uploaded_file)
             
-            # 2. 清理資料 (移除可能殘留的標記)
+            # 2. 清理資料
             clean_text = raw_text.replace("```csv", "").replace("```", "").strip()
             
-            # 3. 【手動解析】不依賴 pd.read_csv，自己切分資料
+            # 3. 【手動解析】不依賴 CSV 格式，自己切分 "###"
             data = []
             lines = clean_text.split('\n')
             
             if len(lines) > 0:
-                # 自動抓取第一行當作表頭
+                # 抓取第一行當表頭
                 headers = lines[0].split('###')
-                # 移除頭尾空白
                 headers = [h.strip() for h in headers]
                 
-                # 處理剩下的每一行
+                # 處理剩下的行
                 for line in lines[1:]:
-                    if not line.strip(): continue # 跳過空行
+                    if not line.strip(): continue
                     
                     row = line.split('###')
                     row = [r.strip() for r in row]
                     
-                    # 補齊欄位 (防呆機制：如果欄位不夠，自動補空值，避免報錯)
+                    # 防呆：欄位長度對齊
                     if len(row) < len(headers):
                         row += [''] * (len(headers) - len(row))
-                    # 如果欄位太多，切掉多餘的
                     elif len(row) > len(headers):
                         row = row[:len(headers)]
                         
                     data.append(row)
                 
                 # 轉成 DataFrame
-                df = pd.read_csv(BytesIO(b"")) # 建立空的
+                df = pd.read_csv(BytesIO(b""))
                 if data:
                     df = pd.DataFrame(data, columns=headers)
 
-                status_box.success("✅ 轉換成功！")
+                status_box.success(f"✅ 轉換成功！(使用模型: {used_model})")
                 st.dataframe(df)
                 
                 # 4. 下載按鈕
@@ -104,11 +120,9 @@ if uploaded_file is not None:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
-                st.warning("AI 回傳的內容似乎是空的，請再試一次。")
+                st.warning("AI 回傳內容為空，請重試。")
 
         except Exception as e:
-            status_box.error(f"發生未預期的錯誤：{e}")
-            # 顯示 AI 回傳的原始文字，方便除錯
-            if 'raw_text' in locals():
-                with st.expander("查看 AI 原始回傳內容 (除錯用)"):
-                    st.text(raw_text)
+            status_box.error("所有模型都嘗試失敗，請稍後再試。")
+            st.error(f"詳細錯誤訊息: {e}")
+
