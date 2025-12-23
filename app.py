@@ -1,120 +1,46 @@
-
 import streamlit as st
 import google.generativeai as genai
-import pandas as pd
-from io import BytesIO
-import time
 
-# --- 設定頁面 ---
-st.set_page_config(page_title="轉檔神器 (萬用版)", page_icon="🎛️")
+st.set_page_config(page_title="API Key 診斷室", page_icon="🏥")
+st.title("🏥 API Key 終極診斷")
 
-# --- 讀取 API Key ---
+# 1. 檢查 Key 格式
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
+    # 隱藏部分密碼，只顯示頭尾確認
+    masked_key = f"{api_key[:5]}...{api_key[-5:]}"
+    st.info(f"正在測試 Key: {masked_key}")
     genai.configure(api_key=api_key)
-except:
-    st.error("⚠️ 找不到 API Key，請檢查 Secrets 設定！")
+except Exception as e:
+    st.error(f"❌ Secrets 設定讀取失敗：{e}")
     st.stop()
 
-# --- 核心處理函數 ---
-def process_file(uploaded_file, model_name):
-    # 使用使用者選單指定的模型
-    model = genai.GenerativeModel(model_name)
+if st.button("🩺 開始診斷 (Check Models)", type="primary"):
+    st.write("正在嘗試連線 Google 伺服器...")
     
-    # 提示詞：使用 ### 分隔
-    prompt = """
-    你是一個專業的資料輸入員。請將這份圖片或 PDF 中的表格轉換為純文字資料。
-    
-    【嚴格規則】
-    1. 每一欄之間，請使用 "###" (三個井字號) 作為分隔符號。
-       (例如：項次###品名###數量###單價###總價)
-    2. 每一列資料換一行。
-    3. 第一行必須是表頭。
-    4. 不要輸出任何 Markdown 標記 (如 ```csv )，只要純文字。
-    5. 金額請保留千分位符號 (如 1,000)，不要隨意移除。
-    6. 若遇到跨頁，請自動合併。
-    7. 底部若有付款條件、稅金等資訊，請整理在表格最下方的列。
-    """
-    
-    bytes_data = uploaded_file.getvalue()
-    parts = [{"mime_type": uploaded_file.type, "data": bytes_data}, prompt]
-    
-    # 發送請求
-    response = model.generate_content(parts)
-    return response.text
-
-# --- APP 介面 ---
-st.title("🎛️ 轉檔神器 (模型自選版)")
-st.markdown("如果出現 404 錯誤，請在下方更換另一個模型試試看！")
-
-# 【關鍵功能】下拉式選單，讓您手動切換模型
-model_option = st.selectbox(
-    "請選擇 AI 模型：",
-    (
-        "gemini-1.5-pro",      # 選項 1: 旗艦版 (最推薦，成功率最高)
-        "gemini-1.5-flash",    # 選項 2: 快速版 (您的帳號可能不支援)
-        "gemini-pro-vision",   # 選項 3: 舊版 (備用)
-    )
-)
-
-uploaded_file = st.file_uploader("請上傳 PDF 或 圖片", type=["pdf", "jpg", "png", "jpeg"])
-
-if uploaded_file is not None:
-    if st.button("🚀 開始轉換", type="primary"):
-        status_box = st.empty()
-        status_box.info(f"正在使用 {model_option} 模型讀取中... (請稍候)")
+    try:
+        # 2. 直接向 Google 詢問可用清單
+        all_models = list(genai.list_models())
         
-        try:
-            # 1. 呼叫 AI (帶入您選的模型)
-            raw_text = process_file(uploaded_file, model_option)
+        # 3. 過濾出能用的「對話模型」
+        chat_models = []
+        for m in all_models:
+            if 'generateContent' in m.supported_generation_methods:
+                chat_models.append(m.name)
+        
+        if chat_models:
+            st.success(f"✅ 連線成功！您的新 Key 可以使用以下 {len(chat_models)} 個模型：")
+            st.json(chat_models)
+            st.balloons()
             
-            # 2. 清理資料
-            clean_text = raw_text.replace("```csv", "").replace("```", "").strip()
+            st.markdown("---")
+            st.markdown("### 👇 這是您下次寫程式要用的正確名稱")
+            st.code(f"model = genai.GenerativeModel('{chat_models[0].replace('models/', '')}')")
+        else:
+            st.warning("⚠️ 連線成功，但这組 Key 權限不足，找不到任何可用的對話模型。")
             
-            # 3. 手動解析
-            data = []
-            lines = clean_text.split('\n')
-            
-            if len(lines) > 0:
-                headers = lines[0].split('###')
-                headers = [h.strip() for h in headers]
-                
-                for line in lines[1:]:
-                    if not line.strip(): continue
-                    row = line.split('###')
-                    row = [r.strip() for r in row]
-                    
-                    if len(row) < len(headers):
-                        row += [''] * (len(headers) - len(row))
-                    elif len(row) > len(headers):
-                        row = row[:len(headers)]
-                        
-                    data.append(row)
-                
-                if data:
-                    df = pd.DataFrame(data, columns=headers)
-                    status_box.success(f"✅ 轉換成功！(使用模型: {model_option})")
-                    st.dataframe(df)
-                    
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='報價單')
-                    
-                    st.download_button(
-                        label="📥 下載 Excel",
-                        data=output.getvalue(),
-                        file_name="報價單.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("AI 回傳了空的內容，請重試。")
-            else:
-                st.warning("格式無法辨識，請重試。")
-
-        except Exception as e:
-            if "404" in str(e):
-                status_box.error(f"❌ 模型 {model_option} 無法使用 (404 Not Found)。請在上方選單換一個模型再試一次！")
-            elif "429" in str(e):
-                status_box.error("⏳ 速度太快了 (429 Quota)！請休息 2 分鐘後再試。")
-            else:
-                status_box.error(f"發生錯誤: {e}")
+    except Exception as e:
+        st.error("❌ 連線失敗 (Fatal Error)")
+        st.error(f"錯誤訊息：{e}")
+        st.markdown("### 🚑 解決辦法")
+        st.markdown("這個錯誤通常代表：**您的 API Key 無效** 或 **Google Cloud 專案未啟用 API**。請務必去 [Google AI Studio](https://aistudio.google.com/app/apikey) 重新申請一個「新專案」的 Key。")
